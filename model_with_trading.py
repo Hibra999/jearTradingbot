@@ -10,6 +10,8 @@ from datetime import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
 
 # Suppress TensorFlow warnings
 import os
@@ -41,7 +43,330 @@ from optuna.samplers import TPESampler
 
 # Import NFI Strategy components
 from trading_strategy import NFITradingStrategy, DynamicRiskManager
-epo = 200
+
+
+# ===================== ENHANCED TRADING COMPONENTS =====================
+
+@dataclass
+class TradingConfig:
+    """Configuration for enhanced trading parameters"""
+    # Confidence thresholds
+    min_confidence_buy: float = 0.6
+    high_confidence_threshold: float = 0.8
+    
+    # Uncertainty thresholds
+    max_uncertainty_buy: float = 0.3
+    uncertainty_position_scale: bool = True
+    
+    # Risk management
+    stop_loss_pct: float = 0.02
+    take_profit_pct: float = 0.04
+    trailing_stop_pct: float = 0.015
+    min_risk_reward_ratio: float = 2.0
+    
+    # Position sizing
+    base_position_pct: float = 0.2  # Base position as % of capital
+    max_position_pct: float = 0.4   # Max position as % of capital
+    confidence_scale_factor: float = 2.0  # How much confidence affects size
+    
+    # Trend filter
+    use_trend_filter: bool = True
+    trend_ma_period: int = 200
+    
+    # Model prediction thresholds
+    min_predicted_gain: float = 0.01  # Minimum 1% predicted gain
+    prediction_lookback: int = 20     # For calculating prediction accuracy
+
+
+class TradingPerformanceTracker:
+    """Track and analyze trading performance"""
+    
+    def __init__(self):
+        self.trades = []
+        self.exit_reasons = {}
+        self.prediction_errors = []
+        
+    def record_trade(self, trade: Dict):
+        """Record a completed trade"""
+        self.trades.append(trade)
+        
+        # Track exit reasons
+        exit_reason = trade.get('exit_reason', 'unknown')
+        exit_type = exit_reason.split(':')[0] if ':' in exit_reason else exit_reason
+        self.exit_reasons[exit_type] = self.exit_reasons.get(exit_type, 0) + 1
+    
+    def record_prediction_error(self, predicted: float, actual: float):
+        """Record prediction error for accuracy tracking"""
+        if actual != 0:
+            error = abs(predicted - actual) / actual
+            self.prediction_errors.append(error)
+    
+    def get_recent_prediction_accuracy(self, lookback: int = 20) -> float:
+        """Get recent prediction accuracy (1 - MAPE)"""
+        if len(self.prediction_errors) < lookback:
+            return 0.8  # Default accuracy
+        
+        recent_errors = self.prediction_errors[-lookback:]
+        avg_error = np.mean(recent_errors)
+        accuracy = max(0, 1 - avg_error)
+        
+        return accuracy
+    
+    def get_exit_reason_analysis(self) -> Dict:
+        """Analyze why trades are exiting"""
+        total_trades = len(self.trades)
+        if total_trades == 0:
+            return {}
+        
+        analysis = {
+            'total_trades': total_trades,
+            'exit_reasons': {},
+            'profitable_exits': {},
+            'losing_exits': {}
+        }
+        
+        # Analyze by exit reason
+        for reason, count in self.exit_reasons.items():
+            trades_by_reason = [t for t in self.trades if reason in t.get('exit_reason', '')]
+            
+            if trades_by_reason:
+                profits = [t['profit'] for t in trades_by_reason]
+                avg_profit = np.mean(profits)
+                win_rate = sum(1 for p in profits if p > 0) / len(profits) * 100
+                
+                analysis['exit_reasons'][reason] = {
+                    'count': count,
+                    'percentage': count / total_trades * 100,
+                    'avg_profit': avg_profit,
+                    'win_rate': win_rate
+                }
+        
+        return analysis
+
+
+class EnhancedTradingStrategy:
+    """Enhanced trading strategy with all requested improvements"""
+    
+    def __init__(self, config: TradingConfig = None):
+        self.config = config or TradingConfig()
+        self.performance_tracker = TradingPerformanceTracker()
+        
+    def calculate_trend_filter(self, prices: pd.Series) -> pd.Series:
+        """Calculate trend filter using moving average"""
+        if len(prices) < self.config.trend_ma_period:
+            return pd.Series([True] * len(prices), index=prices.index)
+        
+        ma = prices.rolling(window=self.config.trend_ma_period).mean()
+        return prices > ma
+    
+    def calculate_position_size(self, 
+                              capital: float,
+                              price: float,
+                              confidence: float,
+                              uncertainty: float,
+                              prediction_accuracy: float) -> float:
+        """
+        Calculate position size based on:
+        - Model confidence
+        - Model uncertainty
+        - Recent prediction accuracy
+        - Available capital
+        """
+        # Base position size
+        base_size = capital * self.config.base_position_pct / price
+        
+        # Scale by confidence (more confident = larger position)
+        confidence_multiplier = 1.0
+        if confidence > self.config.high_confidence_threshold:
+            # High confidence: scale up
+            confidence_multiplier = 1 + (confidence - self.config.high_confidence_threshold) * self.config.confidence_scale_factor
+        elif confidence < self.config.min_confidence_buy:
+            # Low confidence: scale down
+            confidence_multiplier = confidence / self.config.min_confidence_buy
+        
+        # Scale by uncertainty (higher uncertainty = smaller position)
+        uncertainty_multiplier = 1.0
+        if self.config.uncertainty_position_scale:
+            # Inverse relationship: high uncertainty = small position
+            uncertainty_multiplier = max(0.5, 1 - uncertainty)
+        
+        # Scale by recent prediction accuracy
+        accuracy_multiplier = min(1.2, max(0.8, prediction_accuracy))
+        
+        # Calculate final position size
+        position_size = base_size * confidence_multiplier * uncertainty_multiplier * accuracy_multiplier
+        
+        # Apply limits
+        max_size = capital * self.config.max_position_pct / price
+        position_size = min(position_size, max_size)
+        
+        return position_size
+    
+    def check_risk_reward_ratio(self,
+                               current_price: float,
+                               predicted_price: float,
+                               stop_loss_price: float) -> Tuple[bool, float]:
+        """Check if the trade meets minimum risk-reward ratio"""
+        potential_loss = current_price - stop_loss_price
+        potential_gain = predicted_price - current_price
+        
+        if potential_loss <= 0:
+            return False, 0
+        
+        risk_reward_ratio = potential_gain / potential_loss
+        meets_criteria = risk_reward_ratio >= self.config.min_risk_reward_ratio
+        
+        return meets_criteria, risk_reward_ratio
+    
+    def calculate_exit_prices(self, entry_price: float) -> Dict[str, float]:
+        """Calculate stop loss, take profit, and trailing stop prices"""
+        return {
+            'stop_loss': entry_price * (1 - self.config.stop_loss_pct),
+            'take_profit': entry_price * (1 + self.config.take_profit_pct),
+            'trailing_stop_activate': entry_price * (1 + self.config.trailing_stop_pct)
+        }
+    
+    def update_trailing_stop(self, 
+                           current_price: float,
+                           highest_price: float,
+                           trailing_stop_active: bool) -> Tuple[float, bool, float]:
+        """Update trailing stop price"""
+        if current_price > highest_price:
+            highest_price = current_price
+        
+        if not trailing_stop_active and current_price >= highest_price * (1 + self.config.trailing_stop_pct):
+            trailing_stop_active = True
+        
+        if trailing_stop_active:
+            trailing_stop_price = highest_price * (1 - self.config.trailing_stop_pct)
+        else:
+            trailing_stop_price = 0
+        
+        return highest_price, trailing_stop_active, trailing_stop_price
+    
+    def should_buy(self,
+                  nfi_buy_signal: bool,
+                  model_prediction: Dict,
+                  current_price: float,
+                  trend_filter: bool,
+                  prediction_accuracy: float) -> Tuple[bool, str, float]:
+        """
+        Enhanced buy decision incorporating all factors
+        
+        Returns:
+            - should_buy: bool
+            - reason: str
+            - position_size_multiplier: float
+        """
+        confidence = model_prediction['confidence']
+        uncertainty = model_prediction.get('uncertainty', 0)
+        predicted_price = model_prediction['predicted_price']
+        predicted_direction = model_prediction['direction']
+        
+        # Check all conditions
+        conditions = {
+            'nfi_signal': nfi_buy_signal,
+            'trend_filter': trend_filter or not self.config.use_trend_filter,
+            'confidence': confidence >= self.config.min_confidence_buy,
+            'uncertainty': uncertainty <= self.config.max_uncertainty_buy,
+            'direction': predicted_direction == 1,
+            'min_gain': (predicted_price - current_price) / current_price >= self.config.min_predicted_gain,
+            'risk_reward': False  # Will be calculated below
+        }
+        
+        # Check risk-reward ratio
+        stop_loss_price = current_price * (1 - self.config.stop_loss_pct)
+        rr_meets, rr_ratio = self.check_risk_reward_ratio(current_price, predicted_price, stop_loss_price)
+        conditions['risk_reward'] = rr_meets
+        
+        # All conditions must be True
+        should_buy = all(conditions.values())
+        
+        # Build reason string
+        if should_buy:
+            predicted_gain_pct = (predicted_price - current_price) / current_price * 100
+            reason = (f"Confidence: {confidence:.2f}, "
+                     f"Uncertainty: {uncertainty:.2f}, "
+                     f"Predicted gain: {predicted_gain_pct:.1f}%, "
+                     f"Risk-Reward: {rr_ratio:.1f}")
+        else:
+            failed_conditions = [k for k, v in conditions.items() if not v]
+            reason = f"Failed conditions: {', '.join(failed_conditions)}"
+        
+        # Calculate position size multiplier based on signal strength
+        if should_buy:
+            # Strong signals get larger positions
+            size_multiplier = 1.0
+            if confidence > self.config.high_confidence_threshold and uncertainty < 0.2:
+                size_multiplier = 1.5
+            elif confidence < 0.7 or uncertainty > 0.25:
+                size_multiplier = 0.7
+        else:
+            size_multiplier = 0
+        
+        return should_buy, reason, size_multiplier
+    
+    def should_sell(self,
+                   position: Dict,
+                   current_price: float,
+                   nfi_sell_signal: bool,
+                   model_prediction: Dict) -> Tuple[bool, str]:
+        """
+        Enhanced sell decision with multiple exit strategies
+        """
+        entry_price = position['entry_price']
+        exit_prices = position['exit_prices']
+        highest_price = position.get('highest_price', current_price)
+        trailing_stop_active = position.get('trailing_stop_active', False)
+        
+        # Update trailing stop
+        highest_price, trailing_stop_active, trailing_stop_price = self.update_trailing_stop(
+            current_price, highest_price, trailing_stop_active
+        )
+        
+        # Store updated values
+        position['highest_price'] = highest_price
+        position['trailing_stop_active'] = trailing_stop_active
+        
+        # Check exit conditions
+        exit_conditions = []
+        
+        # 1. Stop loss
+        if current_price <= exit_prices['stop_loss']:
+            exit_conditions.append(('stop_loss', f"Stop loss at {exit_prices['stop_loss']:.2f}"))
+        
+        # 2. Take profit
+        if current_price >= exit_prices['take_profit']:
+            exit_conditions.append(('take_profit', f"Take profit at {exit_prices['take_profit']:.2f}"))
+        
+        # 3. Trailing stop
+        if trailing_stop_active and current_price <= trailing_stop_price:
+            exit_conditions.append(('trailing_stop', f"Trailing stop at {trailing_stop_price:.2f}"))
+        
+        # 4. NFI sell signal
+        if nfi_sell_signal:
+            exit_conditions.append(('nfi_sell', "NFI sell signal"))
+        
+        # 5. Model predicts significant drop
+        predicted_change = (model_prediction['predicted_price'] - current_price) / current_price
+        if predicted_change < -0.015 and model_prediction['confidence'] > 0.7:
+            exit_conditions.append(('model_prediction', f"Model predicts {predicted_change*100:.1f}% drop"))
+        
+        # 6. Uncertainty spike (model became very uncertain)
+        if model_prediction.get('uncertainty', 0) > 0.5:
+            current_profit_pct = (current_price - entry_price) / entry_price
+            if current_profit_pct > 0.005:  # If we have any profit, exit on high uncertainty
+                exit_conditions.append(('uncertainty', f"High uncertainty: {model_prediction['uncertainty']:.2f}"))
+        
+        if exit_conditions:
+            # Use the first triggered condition
+            exit_type, reason = exit_conditions[0]
+            return True, reason
+        
+        return False, ""
+
+
+# ===================== ORIGINAL MODEL CLASSES =====================
 
 class TqdmCallback(tf.keras.callbacks.Callback):
     """Custom Keras callback for tqdm progress bars"""
@@ -768,6 +1093,7 @@ class EnhancedHierarchicalMetaLearner:
         # Prepare uncertainty targets (using rolling std as proxy)
         y_train_uncertainty = pd.Series(y_train_scaled).rolling(20).std().fillna(0).values[self.sequence_length:]
         y_val_uncertainty = pd.Series(y_val_scaled).rolling(20).std().fillna(0).values[self.sequence_length:]
+        epo = 15
         if len(X_train_seq) > 0:
             callbacks = [
                 EarlyStopping(monitor='val_loss', patience=25, restore_best_weights=True),
@@ -1326,9 +1652,15 @@ class EnhancedHierarchicalMetaLearner:
                     if isinstance(nn_pred, list):
                         reg_pred_seq = nn_pred[0].ravel()
                         clf_pred_seq = nn_pred[1].ravel()
+                        # Extract uncertainty if available
+                        if len(nn_pred) > 2 and nn_model_name == 'tcn_gru_attention':
+                            uncertainty_seq = nn_pred[2].ravel()
+                        else:
+                            uncertainty_seq = np.zeros_like(reg_pred_seq)
                     else:
                         reg_pred_seq = nn_pred['regression'].ravel()
                         clf_pred_seq = nn_pred['classification'].ravel()
+                        uncertainty_seq = nn_pred.get('uncertainty', np.zeros_like(reg_pred_seq)).ravel()
 
                     if is_simulation_step:
                         # For simulation, we have one prediction. Pad it to match X_test length.
@@ -1336,14 +1668,20 @@ class EnhancedHierarchicalMetaLearner:
                         # We fill the array with the single valid prediction.
                         base_preds_reg[nn_model_name] = np.full(len(X_test_scaled), reg_pred_seq[0])
                         base_preds_clf[nn_model_name] = np.full(len(X_test_scaled), clf_pred_seq[0])
+                        if nn_model_name == 'tcn_gru_attention':
+                            uncertainty = np.full(len(X_test_scaled), uncertainty_seq[0])
                     else:
                         # For batch prediction, align the sequences
                         base_preds_reg[nn_model_name] = self._align_nn_predictions(reg_pred_seq, len(X_test_scaled))
                         base_preds_clf[nn_model_name] = self._align_nn_predictions(clf_pred_seq, len(X_test_scaled))
+                        if nn_model_name == 'tcn_gru_attention':
+                            uncertainty = self._align_nn_predictions(uncertainty_seq, len(X_test_scaled))
                 else:
                     # If no sequences could be formed, fill with zeros as a fallback.
                     base_preds_reg[nn_model_name] = np.zeros(len(X_test_scaled))
                     base_preds_clf[nn_model_name] = np.zeros(len(X_test_scaled))
+                    if nn_model_name == 'tcn_gru_attention':
+                        uncertainty = np.zeros(len(X_test_scaled))
 
         # Verify we have all 3 models
         expected_models = ['lightgbm', 'tcn_gru_attention', 'transformer_lstm']
@@ -1413,11 +1751,18 @@ class EnhancedHierarchicalMetaLearner:
         level3 = self.scalers['target'].inverse_transform(level3.reshape(-1, 1)).ravel()
         level4 = self.scalers['target'].inverse_transform(level4.reshape(-1, 1)).ravel()
         
+        # Normalize uncertainty from TCN model
+        if 'uncertainty' in locals():
+            # Scale uncertainty to 0-1 range
+            uncertainty = uncertainty / (np.max(uncertainty) + 1e-6)
+        else:
+            uncertainty = level4_uncertainty
+        
         if return_all_predictions:
             return {
                 'final_prediction': final_price,
                 'confidence': final_confidence,
-                'uncertainty': level4_uncertainty,
+                'uncertainty': uncertainty,  # Use TCN uncertainty if available
                 'level1_regression': level1_reg,
                 'level1_classification': level1_clf,
                 'level2_regression': level2_reg,
@@ -1432,27 +1777,38 @@ class EnhancedHierarchicalMetaLearner:
             return final_price
 
 
-def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X, scaler_y, 
-                                                      initial_capital=1000, risk_level='medium',
-                                                      forecast_horizon=168, update_interval=10):
+def simulate_enhanced_real_time_forecast_with_advanced_trading(
+    model, test_data, scaler_X, scaler_y, 
+    initial_capital=1000, 
+    trading_config=None,
+    nfi_strategy=None,
+    forecast_horizon=168):
     """
-    Simulate real-time forecasting WITH integrated NFI trading strategy.
-    This is the CORRECT implementation that evaluates the strategy using future predictions.
+    Enhanced simulation with all requested improvements:
+    - Uncertainty-based filtering
+    - Dynamic position sizing based on confidence
+    - Risk-reward ratio checking
+    - Take profit and trailing stops
+    - Trend filtering
+    - Better visualization
     """
     print(f"\n{'='*60}")
-    print(f"REAL-TIME FORECAST SIMULATION WITH NFI TRADING")
+    print(f"ENHANCED REAL-TIME FORECAST SIMULATION")
     print(f"{'='*60}")
     print(f"Initial Capital: ${initial_capital:.2f}")
-    print(f"Risk Level: {risk_level}")
     print(f"Forecast Horizon: {forecast_horizon} steps")
     print(f"{'='*60}\n")
     
-    # Initialize NFI Strategy and Risk Manager
-    nfi_strategy = NFITradingStrategy()
-    risk_manager = DynamicRiskManager(initial_capital, risk_level)
+    # Initialize enhanced strategy
+    trading_config = trading_config or TradingConfig()
+    enhanced_strategy = EnhancedTradingStrategy(trading_config)
+    
+    # Initialize NFI Strategy if not provided
+    if nfi_strategy is None:
+        nfi_strategy = NFITradingStrategy()
     
     # Trading state
-    position = None  # {'entry_price', 'quantity', 'entry_time', 'entry_idx', 'cost'}
+    position = None
     trades = []
     current_capital = initial_capital
     
@@ -1461,15 +1817,11 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     actual_values = []
     equity_curve = [initial_capital]
     trade_signals = []
+    confidence_scores = []
+    uncertainty_scores = []
+    direction_predictions = []
     
-    # Model performance tracking
-    ensemble_confidence = []
-    ensemble_direction = []
-    prediction_errors = []
-    confidence_window = 20
-    
-    # Prepare the DataFrame for NFI indicators calculation
-    # We need full OHLCV data for NFI
+    # Prepare the DataFrame for NFI indicators
     full_df = test_data.copy()
     
     # Ensure we have OHLCV columns
@@ -1479,9 +1831,13 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     if 'Volume' not in full_df.columns:
         full_df['Volume'] = 1000
     
-    # Calculate NFI indicators on the full dataset
+    # Calculate NFI indicators
     print("Calculating NFI technical indicators...")
     nfi_strategy.calculate_indicators(full_df)
+    
+    # Calculate trend filter
+    print("Calculating trend filter...")
+    trend_filter = enhanced_strategy.calculate_trend_filter(full_df['Close'])
     
     sequence_length = model.sequence_length
     
@@ -1492,7 +1848,7 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     historical_window_df = test_data.iloc[:sim_start_index].copy()
     
     # Progress bar for simulation
-    sim_pbar = tqdm(range(forecast_horizon), desc="Simulating forecast with trading", position=0)
+    sim_pbar = tqdm(range(forecast_horizon), desc="Simulating with enhanced strategy", position=0)
     
     for step in sim_pbar:
         current_step_index = sim_start_index + step
@@ -1506,26 +1862,32 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
         # Prepare the current window for prediction
         X_window, _ = model.prepare_data(historical_window_df, target_col='Close')
         
-        # Make a prediction for the NEXT time step (this is the future prediction)
+        # Make a prediction for the NEXT time step
         all_preds = model.predict(X_window, return_all_predictions=True)
         
-        # The prediction for the next step
+        # Extract predictions
         predicted_next_price = all_preds['final_prediction'][-1]
         current_confidence = all_preds['ensemble_confidence'][-1]
-        predicted_direction = all_preds['ensemble_direction'][-1]  # 1 for up, 0 for down
+        predicted_direction = all_preds['ensemble_direction'][-1]
+        current_uncertainty = all_preds.get('uncertainty', [0])[-1]
         
-        # Store predictions (for performance tracking)
+        # Store predictions
         predictions.append(predicted_next_price)
         actual_values.append(current_actual_price)
-        ensemble_confidence.append(current_confidence)
-        ensemble_direction.append(predicted_direction)
+        confidence_scores.append(current_confidence)
+        uncertainty_scores.append(current_uncertainty)
+        direction_predictions.append(predicted_direction)
         
-        # Calculate prediction error for confidence tracking
+        # Track prediction accuracy
         if len(predictions) > 1:
-            # Compare previous prediction with current actual
-            prev_prediction = predictions[-2]
-            error = abs(current_actual_price - prev_prediction) / current_actual_price
-            prediction_errors.append(error)
+            enhanced_strategy.performance_tracker.record_prediction_error(
+                predictions[-2], current_actual_price
+            )
+        
+        # Get recent prediction accuracy
+        prediction_accuracy = enhanced_strategy.performance_tracker.get_recent_prediction_accuracy(
+            trading_config.prediction_lookback
+        )
         
         # Update current equity
         if position is not None:
@@ -1535,34 +1897,26 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
             current_equity = current_capital
         equity_curve.append(current_equity)
         
-        # TRADING LOGIC - This is where we use the future prediction advantage
+        # ENHANCED TRADING LOGIC
         
         # Check for SELL signal first (if in position)
         if position is not None:
-            # 1. Check NFI sell conditions
+            # Get NFI sell signal
             nfi_sell, sell_condition = nfi_strategy.check_sell_conditions(current_step_index)
             
-            should_sell = False
-            sell_reason = ""
+            # Prepare model prediction dict
+            model_pred = {
+                'predicted_price': predicted_next_price,
+                'confidence': current_confidence,
+                'uncertainty': current_uncertainty,
+                'direction': predicted_direction
+            }
             
-            if nfi_sell:
-                should_sell = True
-                sell_reason = f"NFI sell condition {sell_condition}"
+            # Check enhanced sell conditions
+            should_sell, sell_reason = enhanced_strategy.should_sell(
+                position, current_actual_price, nfi_sell, model_pred
+            )
             
-            # 2. Check model prediction (if predicting significant drop)
-            predicted_change = (predicted_next_price - current_actual_price) / current_actual_price
-            if predicted_change < -0.02 and current_confidence > 0.6:  # Predicting >2% drop with good confidence
-                should_sell = True
-                sell_reason = f"Model predicts {predicted_change*100:.1f}% drop"
-            
-            # 3. Stop loss check
-            entry_price = position['entry_price']
-            current_loss = (entry_price - current_actual_price) / entry_price
-            if current_loss > 0.02:  # 2% stop loss
-                should_sell = True
-                sell_reason = f"Stop loss triggered ({current_loss*100:.1f}% loss)"
-            
-            # Execute sell if needed
             if should_sell:
                 # Calculate proceeds and profit
                 proceeds = position['quantity'] * current_actual_price
@@ -1570,7 +1924,7 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
                 profit_percentage = (profit / position['cost']) * 100
                 
                 # Record trade
-                trades.append({
+                trade = {
                     'entry_time': position['entry_time'],
                     'exit_time': current_step_index,
                     'entry_price': position['entry_price'],
@@ -1580,11 +1934,12 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
                     'profit_percentage': profit_percentage,
                     'holding_period': current_step_index - position['entry_idx'],
                     'exit_reason': sell_reason
-                })
+                }
+                trades.append(trade)
+                enhanced_strategy.performance_tracker.record_trade(trade)
                 
                 # Update capital
                 current_capital += proceeds
-                risk_manager.update_capital(current_capital)
                 
                 # Record signal
                 trade_signals.append({
@@ -1602,36 +1957,38 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
                           f"Profit: ${profit:.2f} ({profit_percentage:.1f}%) | {sell_reason}")
         
         # Check for BUY signal (if not in position)
-        elif position is None and current_capital > 10:  # Minimum capital check
-            # 1. Check NFI buy conditions
+        elif position is None and current_capital > 10:
+            # Get NFI buy signal
             nfi_buy, buy_condition = nfi_strategy.check_buy_conditions(current_step_index)
             
-            should_buy = False
-            buy_reason = ""
+            # Get trend filter value
+            current_trend = trend_filter.iloc[current_step_index] if current_step_index < len(trend_filter) else True
             
-            if nfi_buy:
-                # 2. Check model prediction direction (must predict increase)
-                if predicted_direction == 1 and predicted_next_price > current_actual_price:
-                    # 3. Check prediction confidence
-                    if len(prediction_errors) >= confidence_window:
-                        recent_errors = prediction_errors[-confidence_window:]
-                        avg_error = np.mean(recent_errors)
-                        current_prediction_error = prediction_errors[-1] if prediction_errors else 1.0
-                        
-                        # Buy if current error is better than average AND confidence is high
-                        if current_prediction_error < avg_error * 0.8 and current_confidence > 0.6:
-                            should_buy = True
-                            predicted_gain = (predicted_next_price - current_actual_price) / current_actual_price
-                            buy_reason = f"NFI condition {buy_condition} + Model predicts {predicted_gain*100:.1f}% gain"
-                    elif current_confidence > 0.7:  # Early in simulation, rely more on confidence
-                        should_buy = True
-                        predicted_gain = (predicted_next_price - current_actual_price) / current_actual_price
-                        buy_reason = f"NFI condition {buy_condition} + High confidence prediction"
+            # Prepare model prediction dict
+            model_pred = {
+                'predicted_price': predicted_next_price,
+                'confidence': current_confidence,
+                'uncertainty': current_uncertainty,
+                'direction': predicted_direction
+            }
             
-            # Execute buy if needed
+            # Check enhanced buy conditions
+            should_buy, buy_reason, size_multiplier = enhanced_strategy.should_buy(
+                nfi_buy, model_pred, current_actual_price, 
+                current_trend, prediction_accuracy
+            )
+            
             if should_buy:
-                # Calculate position size
-                position_size = risk_manager.calculate_position_size(current_actual_price)
+                # Calculate dynamic position size
+                position_size = enhanced_strategy.calculate_position_size(
+                    current_capital, current_actual_price,
+                    current_confidence, current_uncertainty,
+                    prediction_accuracy
+                )
+                
+                # Apply size multiplier from signal strength
+                position_size *= size_multiplier
+                
                 cost = position_size * current_actual_price
                 
                 # Ensure we don't exceed available capital
@@ -1639,13 +1996,19 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
                     position_size = (current_capital * 0.99) / current_actual_price
                     cost = position_size * current_actual_price
                 
+                # Calculate exit prices
+                exit_prices = enhanced_strategy.calculate_exit_prices(current_actual_price)
+                
                 # Create position
                 position = {
                     'entry_price': current_actual_price,
                     'quantity': position_size,
                     'entry_time': current_step_index,
                     'entry_idx': current_step_index,
-                    'cost': cost
+                    'cost': cost,
+                    'exit_prices': exit_prices,
+                    'highest_price': current_actual_price,
+                    'trailing_stop_active': False
                 }
                 
                 # Update capital
@@ -1657,23 +2020,23 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
                     'type': 'buy',
                     'price': current_actual_price,
                     'quantity': position_size,
-                    'reason': buy_reason
+                    'reason': f"{buy_condition}: {buy_reason}"
                 })
                 
                 tqdm.write(f"[Step {step}] BUY @ ${current_actual_price:.2f} | "
-                          f"Quantity: {position_size:.4f} | Cost: ${cost:.2f} | {buy_reason}")
+                          f"Size: {position_size:.4f} | Cost: ${cost:.2f} | {buy_reason}")
         
         # Update the historical window for next prediction
         next_data_point = test_data.iloc[current_step_index:current_step_index+1]
         historical_window_df = pd.concat([historical_window_df.iloc[1:], next_data_point], ignore_index=True)
         
         # Update progress bar
-        model_accuracy = 100 * (1 - abs(predicted_next_price - current_actual_price) / current_actual_price)
         sim_pbar.set_postfix({
             'Price': f'${current_actual_price:.2f}',
-            'Pred': f'${predicted_next_price:.2f}',
             'Equity': f'${current_equity:.2f}',
-            'Trades': len(trades)
+            'Trades': len(trades),
+            'Conf': f'{current_confidence:.2f}',
+            'Unc': f'{current_uncertainty:.2f}'
         })
     
     sim_pbar.close()
@@ -1682,7 +2045,7 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     if position is not None:
         proceeds = position['quantity'] * actual_values[-1]
         profit = proceeds - position['cost']
-        trades.append({
+        trade = {
             'entry_time': position['entry_time'],
             'exit_time': len(actual_values) - 1,
             'entry_price': position['entry_price'],
@@ -1692,7 +2055,9 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
             'profit_percentage': (profit / position['cost']) * 100,
             'holding_period': len(actual_values) - 1 - position['entry_idx'],
             'exit_reason': 'End of simulation'
-        })
+        }
+        trades.append(trade)
+        enhanced_strategy.performance_tracker.record_trade(trade)
         current_capital += proceeds
         equity_curve[-1] = current_capital
     
@@ -1723,15 +2088,19 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     drawdown = (equity_curve - peak) / peak
     max_drawdown = np.min(drawdown) * 100
     
+    # Exit reason analysis
+    exit_analysis = enhanced_strategy.performance_tracker.get_exit_reason_analysis()
+    
     # Print summary
     print(f"\n{'='*60}")
-    print(f"SIMULATION COMPLETE - INTEGRATED RESULTS")
+    print(f"ENHANCED SIMULATION COMPLETE")
     print(f"{'='*60}")
     print(f"\nMODEL PERFORMANCE:")
     print(f"  MAE: ${mae:.2f}")
     print(f"  RMSE: ${rmse:.2f}")
     print(f"  MAPE: {mape:.2f}%")
-    print(f"  Avg Confidence: {np.mean(ensemble_confidence):.3f}")
+    print(f"  Avg Confidence: {np.mean(confidence_scores):.3f}")
+    print(f"  Avg Uncertainty: {np.mean(uncertainty_scores):.3f}")
     
     print(f"\nTRADING PERFORMANCE:")
     print(f"  Initial Capital:  ${initial_capital:.2f}")
@@ -1739,18 +2108,25 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
     print(f"  Total Return:     {total_return:.2f}%")
     print(f"  Total Trades:     {total_trades}")
     print(f"  Win Rate:         {win_rate:.1f}%")
-    print(f"  Avg Profit:       ${avg_profit:.2f}")
-    print(f"  Avg Loss:         ${avg_loss:.2f}")
+    print(f"  Average Win:      ${avg_profit:.2f}")
+    print(f"  Average Loss:     ${avg_loss:.2f}")
     print(f"  Max Drawdown:     {max_drawdown:.2f}%")
     print(f"  Sharpe Ratio:     {sharpe_ratio:.2f}")
+    
+    print(f"\nEXIT REASON ANALYSIS:")
+    for reason, stats in exit_analysis.get('exit_reasons', {}).items():
+        print(f"  {reason}: {stats['count']} trades ({stats['percentage']:.1f}%), "
+              f"Win Rate: {stats['win_rate']:.1f}%, Avg Profit: ${stats['avg_profit']:.2f}")
+    
     print(f"{'='*60}\n")
     
     return {
         # Model predictions
         'predictions': predictions,
         'actual_values': actual_values,
-        'confidence_scores': ensemble_confidence,
-        'direction_predictions': ensemble_direction,
+        'confidence_scores': confidence_scores,
+        'uncertainty_scores': uncertainty_scores,
+        'direction_predictions': direction_predictions,
         
         # Trading results
         'initial_capital': initial_capital,
@@ -1778,7 +2154,13 @@ def simulate_enhanced_real_time_forecast_with_trading(model, test_data, scaler_X
             'rsi': nfi_strategy.indicators['rsi'][sim_start_index:current_step_index+1],
             'mfi': nfi_strategy.indicators['mfi'][sim_start_index:current_step_index+1],
             'ewo': nfi_strategy.indicators['ewo'][sim_start_index:current_step_index+1]
-        }
+        },
+        
+        # Exit analysis
+        'exit_analysis': exit_analysis,
+        
+        # For trend analysis
+        'trend_filter': trend_filter[sim_start_index:current_step_index+1]
     }
 
 
@@ -1790,12 +2172,41 @@ def simulate_enhanced_real_time_forecast(model, test_data, scaler_X, scaler_y,
     Wrapper function that can run with or without trading simulation
     """
     if enable_trading:
-        return simulate_enhanced_real_time_forecast_with_trading(
+        # Map risk level to trading config
+        risk_configs = {
+            'low': TradingConfig(
+                min_confidence_buy=0.7,
+                max_uncertainty_buy=0.25,
+                stop_loss_pct=0.015,
+                take_profit_pct=0.03,
+                base_position_pct=0.15,
+                max_position_pct=0.3
+            ),
+            'medium': TradingConfig(
+                min_confidence_buy=0.6,
+                max_uncertainty_buy=0.3,
+                stop_loss_pct=0.02,
+                take_profit_pct=0.04,
+                base_position_pct=0.2,
+                max_position_pct=0.4
+            ),
+            'high': TradingConfig(
+                min_confidence_buy=0.5,
+                max_uncertainty_buy=0.35,
+                stop_loss_pct=0.025,
+                take_profit_pct=0.05,
+                base_position_pct=0.25,
+                max_position_pct=0.5
+            )
+        }
+        
+        trading_config = risk_configs.get(risk_level, risk_configs['medium'])
+        
+        return simulate_enhanced_real_time_forecast_with_advanced_trading(
             model, test_data, scaler_X, scaler_y,
             initial_capital=initial_capital,
-            risk_level=risk_level,
-            forecast_horizon=forecast_horizon,
-            update_interval=update_interval
+            trading_config=trading_config,
+            forecast_horizon=forecast_horizon
         )
     else:
         # Original function without trading (simplified version)
