@@ -41,7 +41,7 @@ from optuna.samplers import TPESampler
 
 # Import NFI Strategy components
 from trading_strategy import NFITradingStrategy, DynamicRiskManager
-
+epo = 200
 
 class TqdmCallback(tf.keras.callbacks.Callback):
     """Custom Keras callback for tqdm progress bars"""
@@ -768,7 +768,6 @@ class EnhancedHierarchicalMetaLearner:
         # Prepare uncertainty targets (using rolling std as proxy)
         y_train_uncertainty = pd.Series(y_train_scaled).rolling(20).std().fillna(0).values[self.sequence_length:]
         y_val_uncertainty = pd.Series(y_val_scaled).rolling(20).std().fillna(0).values[self.sequence_length:]
-        epo = 15
         if len(X_train_seq) > 0:
             callbacks = [
                 EarlyStopping(monitor='val_loss', patience=25, restore_best_weights=True),
