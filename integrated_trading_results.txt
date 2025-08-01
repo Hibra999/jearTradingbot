@@ -1,0 +1,135 @@
+
+INTEGRATED TRADING SIMULATION RESULTS
+=====================================
+Symbol: SOL/USDT
+Date: 2025-07-31 19:28:31
+
+CONFIGURATION:
+--------------
+Initial Capital:     $1000.00
+Risk Level:          medium
+Sequence Length:     168
+Forecast Horizon:    562
+
+MODEL PERFORMANCE:
+------------------
+MAE:                 $1.77
+RMSE:                $2.22
+MAPE:                1.00%
+Avg Confidence:      0.635
+
+TRADING PERFORMANCE:
+--------------------
+Final Capital:       $996.85
+Total Return:        -0.32%
+Total Trades:        12
+Win Rate:            41.7%
+Average Win:         $8.22
+Average Loss:        $-6.32
+Sharpe Ratio:        -0.07
+Max Drawdown:        -3.45%
+
+STRATEGY DETAILS:
+-----------------
+Strategy: NFI (NostalgiaForInfinity)
+- 21 Buy Conditions (OR logic)
+- 8 Sell Conditions (OR logic)
+- Dynamic Risk Management
+- Model Prediction Integration
+- Confidence-Based Filtering
+
+KEY INSIGHTS:
+-------------
+1. The strategy leverages model predictions to filter NFI signals
+2. Trades are only executed when both NFI conditions AND model predictions align
+3. Risk is dynamically adjusted based on capital levels
+4. Stop loss at 2% protects against significant losses
+=====================================
+
+
+DETAILED TRADE LOG:
+==================
+
+Trade #1:
+  Entry: $151.47 @ step 178
+  Exit:  $157.27 @ step 196
+  Profit: $4.79 (3.8%)
+  Duration: 18 steps
+  Exit Reason: NFI sell condition 5
+
+Trade #2:
+  Entry: $160.40 @ step 221
+  Exit:  $163.83 @ step 222
+  Profit: $5.37 (2.1%)
+  Duration: 1 steps
+  Exit Reason: NFI sell condition 5
+
+Trade #3:
+  Entry: $163.87 @ step 233
+  Exit:  $159.80 @ step 261
+  Profit: $-6.27 (-2.5%)
+  Duration: 28 steps
+  Exit Reason: Stop loss triggered (2.5% loss)
+
+Trade #4:
+  Entry: $158.14 @ step 264
+  Exit:  $167.11 @ step 300
+  Profit: $14.24 (5.7%)
+  Duration: 36 steps
+  Exit Reason: NFI sell condition 5
+
+Trade #5:
+  Entry: $160.11 @ step 325
+  Exit:  $167.28 @ step 354
+  Profit: $11.40 (4.5%)
+  Duration: 29 steps
+  Exit Reason: NFI sell condition 5
+
+Trade #6:
+  Entry: $189.40 @ step 536
+  Exit:  $181.87 @ step 542
+  Profit: $-10.23 (-4.0%)
+  Duration: 6 steps
+  Exit Reason: Stop loss triggered (4.0% loss)
+
+Trade #7:
+  Entry: $185.21 @ step 546
+  Exit:  $178.82 @ step 563
+  Profit: $-8.79 (-3.5%)
+  Duration: 17 steps
+  Exit Reason: Stop loss triggered (3.5% loss)
+
+Trade #8:
+  Entry: $180.74 @ step 571
+  Exit:  $176.59 @ step 575
+  Profit: $-5.80 (-2.3%)
+  Duration: 4 steps
+  Exit Reason: Stop loss triggered (2.3% loss)
+
+Trade #9:
+  Entry: $188.98 @ step 594
+  Exit:  $185.09 @ step 607
+  Profit: $-5.17 (-2.1%)
+  Duration: 13 steps
+  Exit Reason: Stop loss triggered (2.1% loss)
+
+Trade #10:
+  Entry: $185.49 @ step 609
+  Exit:  $193.35 @ step 636
+  Profit: $5.29 (4.2%)
+  Duration: 27 steps
+  Exit Reason: NFI sell condition 5
+
+Trade #11:
+  Entry: $184.33 @ step 660
+  Exit:  $180.41 @ step 671
+  Profit: $-5.34 (-2.1%)
+  Duration: 11 steps
+  Exit Reason: Stop loss triggered (2.1% loss)
+
+Trade #12:
+  Entry: $181.11 @ step 676
+  Exit:  $177.30 @ step 692
+  Profit: $-2.63 (-2.1%)
+  Duration: 16 steps
+  Exit Reason: Stop loss triggered (2.1% loss)
