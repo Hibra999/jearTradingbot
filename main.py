@@ -386,25 +386,36 @@ def plot_enhanced_integrated_results(simulation_result):
     
     # 9. Cumulative Returns Comparison
     ax9 = fig.add_subplot(gs[5, 1])
-    
+
     # Calculate cumulative returns
     equity_curve = np.array(simulation_result['equity_curve'])
-    strategy_returns = (equity_curve / equity_curve[0] - 1) * 100
-    
-    # Buy and hold comparison
     prices = np.array(simulation_result['actual_values'])
+
+    # Align equity curve with prices (remove initial capital if needed)
+    if len(equity_curve) > len(prices):
+        # Skip the initial capital value
+        equity_curve_aligned = equity_curve[1:len(prices)+1]
+    else:
+        equity_curve_aligned = equity_curve[:len(prices)]
+
+    # Calculate returns with aligned data
+    strategy_returns = (equity_curve_aligned / equity_curve[0] - 1) * 100
     buy_hold_returns = (prices / prices[0] - 1) * 100
-    
+
+    # Now both should have the same length
+    assert len(strategy_returns) == len(buy_hold_returns), f"Length mismatch: {len(strategy_returns)} vs {len(buy_hold_returns)}"
+
+    # Plot with same length data
     ax9.plot(strategy_returns, label='Strategy', color=colors['profit'], linewidth=2.5)
     ax9.plot(buy_hold_returns, label='Buy & Hold', color=colors['neutral'], 
             linewidth=2, linestyle='--', alpha=0.8)
-    
+
     # Fill area between
     ax9.fill_between(range(len(strategy_returns)), strategy_returns, buy_hold_returns,
-                    where=np.array(strategy_returns) > np.array(buy_hold_returns),
+                    where=strategy_returns > buy_hold_returns,
                     color=colors['profit'], alpha=0.2, label='Outperformance')
     ax9.fill_between(range(len(strategy_returns)), strategy_returns, buy_hold_returns,
-                    where=np.array(strategy_returns) <= np.array(buy_hold_returns),
+                    where=strategy_returns <= buy_hold_returns,
                     color=colors['loss'], alpha=0.2, label='Underperformance')
     
     ax9.set_title('Cumulative Returns: Strategy vs Buy & Hold', fontsize=14)

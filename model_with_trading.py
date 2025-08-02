@@ -145,11 +145,22 @@ class TradingPerformanceTracker:
 
 
 class EnhancedTradingStrategy:
-    """Enhanced trading strategy with all requested improvements"""
+    """Enhanced trading strategy with debugging and more flexible conditions"""
     
-    def __init__(self, config: TradingConfig = None):
+    def __init__(self, config: TradingConfig = None, debug=True):
         self.config = config or TradingConfig()
         self.performance_tracker = TradingPerformanceTracker()
+        self.debug = debug
+        self.condition_stats = {
+            'nfi_signal': 0,
+            'trend_filter': 0,
+            'confidence': 0,
+            'uncertainty': 0,
+            'direction': 0,
+            'min_gain': 0,
+            'risk_reward': 0,
+            'total_checks': 0
+        }
         
     def calculate_trend_filter(self, prices: pd.Series) -> pd.Series:
         """Calculate trend filter using moving average"""
@@ -251,7 +262,7 @@ class EnhancedTradingStrategy:
                   trend_filter: bool,
                   prediction_accuracy: float) -> Tuple[bool, str, float]:
         """
-        Enhanced buy decision incorporating all factors
+        Enhanced buy decision with debugging and flexible logic
         
         Returns:
             - should_buy: bool
@@ -263,44 +274,110 @@ class EnhancedTradingStrategy:
         predicted_price = model_prediction['predicted_price']
         predicted_direction = model_prediction['direction']
         
-        # Check all conditions
-        conditions = {
-            'nfi_signal': nfi_buy_signal,
-            'trend_filter': trend_filter or not self.config.use_trend_filter,
-            'confidence': confidence >= self.config.min_confidence_buy,
-            'uncertainty': uncertainty <= self.config.max_uncertainty_buy,
-            'direction': predicted_direction == 1,
-            'min_gain': (predicted_price - current_price) / current_price >= self.config.min_predicted_gain,
-            'risk_reward': False  # Will be calculated below
-        }
+        self.condition_stats['total_checks'] += 1
         
-        # Check risk-reward ratio
+        # Track individual conditions
+        conditions = {}
+        
+        # 1. NFI signal (REQUIRED)
+        conditions['nfi_signal'] = nfi_buy_signal
+        if nfi_buy_signal:
+            self.condition_stats['nfi_signal'] += 1
+        
+        # 2. Trend filter (OPTIONAL if disabled)
+        conditions['trend_filter'] = trend_filter or not self.config.use_trend_filter
+        if conditions['trend_filter']:
+            self.condition_stats['trend_filter'] += 1
+        
+        # 3. Confidence (FLEXIBLE - reduce threshold if other conditions are strong)
+        flexible_confidence_threshold = self.config.min_confidence_buy
+        if nfi_buy_signal and predicted_direction == 1:
+            flexible_confidence_threshold *= 0.8  # Reduce by 20% if other signals are good
+        
+        conditions['confidence'] = confidence >= flexible_confidence_threshold
+        if conditions['confidence']:
+            self.condition_stats['confidence'] += 1
+        
+        # 4. Uncertainty (FLEXIBLE)
+        flexible_uncertainty_threshold = self.config.max_uncertainty_buy
+        if confidence > 0.7:  # If high confidence, allow higher uncertainty
+            flexible_uncertainty_threshold *= 1.2
+        
+        conditions['uncertainty'] = uncertainty <= flexible_uncertainty_threshold
+        if conditions['uncertainty']:
+            self.condition_stats['uncertainty'] += 1
+        
+        # 5. Direction
+        conditions['direction'] = predicted_direction == 1
+        if conditions['direction']:
+            self.condition_stats['direction'] += 1
+        
+        # 6. Minimum gain (FLEXIBLE)
+        predicted_gain = (predicted_price - current_price) / current_price
+        flexible_min_gain = self.config.min_predicted_gain
+        if confidence > 0.7 and uncertainty < 0.2:
+            flexible_min_gain *= 0.5  # Reduce requirement if high confidence
+        
+        conditions['min_gain'] = predicted_gain >= flexible_min_gain
+        if conditions['min_gain']:
+            self.condition_stats['min_gain'] += 1
+        
+        # 7. Risk-reward ratio (FLEXIBLE)
         stop_loss_price = current_price * (1 - self.config.stop_loss_pct)
         rr_meets, rr_ratio = self.check_risk_reward_ratio(current_price, predicted_price, stop_loss_price)
-        conditions['risk_reward'] = rr_meets
         
-        # All conditions must be True
-        should_buy = all(conditions.values())
+        # Flexible risk-reward based on confidence
+        flexible_rr_threshold = self.config.min_risk_reward_ratio
+        if confidence > 0.75 and predicted_gain > 0.02:
+            flexible_rr_threshold *= 0.7  # Reduce to 1.4 if very confident
+        
+        conditions['risk_reward'] = rr_ratio >= flexible_rr_threshold
+        if conditions['risk_reward']:
+            self.condition_stats['risk_reward'] += 1
+        
+        # FLEXIBLE LOGIC: Require NFI signal + at least 4 out of 6 other conditions
+        required_conditions = ['nfi_signal']
+        optional_conditions = ['trend_filter', 'confidence', 'uncertainty', 'direction', 'min_gain', 'risk_reward']
+        
+        # Check required conditions
+        required_met = all(conditions[cond] for cond in required_conditions)
+        
+        # Count optional conditions met
+        optional_met = sum(conditions[cond] for cond in optional_conditions)
+        
+        # Need at least 4 out of 6 optional conditions
+        should_buy = required_met and optional_met >= 4
+        
+        # Debug logging
+        if self.debug and self.condition_stats['total_checks'] % 100 == 0:
+            print(f"\n[DEBUG] Buy condition stats after {self.condition_stats['total_checks']} checks:")
+            for cond, count in self.condition_stats.items():
+                if cond != 'total_checks':
+                    pct = (count / self.condition_stats['total_checks']) * 100
+                    print(f"  {cond}: {count} times ({pct:.1f}%)")
+            print(f"  Current check - Met {optional_met}/6 optional conditions")
+            if not should_buy:
+                failed = [k for k, v in conditions.items() if not v]
+                print(f"  Failed conditions: {failed}")
         
         # Build reason string
         if should_buy:
-            predicted_gain_pct = (predicted_price - current_price) / current_price * 100
-            reason = (f"Confidence: {confidence:.2f}, "
-                     f"Uncertainty: {uncertainty:.2f}, "
-                     f"Predicted gain: {predicted_gain_pct:.1f}%, "
-                     f"Risk-Reward: {rr_ratio:.1f}")
+            predicted_gain_pct = predicted_gain * 100
+            reason = (f"NFI + {optional_met}/6 conditions | "
+                     f"Conf: {confidence:.2f}, Unc: {uncertainty:.2f}, "
+                     f"Gain: {predicted_gain_pct:.1f}%, RR: {rr_ratio:.1f}")
         else:
             failed_conditions = [k for k, v in conditions.items() if not v]
-            reason = f"Failed conditions: {', '.join(failed_conditions)}"
+            reason = f"Failed: {', '.join(failed_conditions)} ({optional_met}/6 optional)"
         
         # Calculate position size multiplier based on signal strength
         if should_buy:
             # Strong signals get larger positions
-            size_multiplier = 1.0
-            if confidence > self.config.high_confidence_threshold and uncertainty < 0.2:
-                size_multiplier = 1.5
-            elif confidence < 0.7 or uncertainty > 0.25:
-                size_multiplier = 0.7
+            strength_score = optional_met / 6.0  # 0.67 to 1.0
+            confidence_score = min(1.0, confidence / 0.8)  # Normalize to 1.0
+            
+            size_multiplier = 0.7 + (0.3 * strength_score) + (0.3 * confidence_score)
+            size_multiplier = min(1.5, size_multiplier)  # Cap at 1.5x
         else:
             size_multiplier = 0
         
@@ -349,13 +426,13 @@ class EnhancedTradingStrategy:
         
         # 5. Model predicts significant drop
         predicted_change = (model_prediction['predicted_price'] - current_price) / current_price
-        if predicted_change < -0.015 and model_prediction['confidence'] > 0.7:
+        if predicted_change < -0.01 and model_prediction['confidence'] > 0.6:  # Reduced from -0.015 and 0.7
             exit_conditions.append(('model_prediction', f"Model predicts {predicted_change*100:.1f}% drop"))
         
         # 6. Uncertainty spike (model became very uncertain)
-        if model_prediction.get('uncertainty', 0) > 0.5:
+        if model_prediction.get('uncertainty', 0) > 0.4:  # Reduced from 0.5
             current_profit_pct = (current_price - entry_price) / entry_price
-            if current_profit_pct > 0.005:  # If we have any profit, exit on high uncertainty
+            if current_profit_pct > 0:  # If we have any profit, exit on high uncertainty
                 exit_conditions.append(('uncertainty', f"High uncertainty: {model_prediction['uncertainty']:.2f}"))
         
         if exit_conditions:
