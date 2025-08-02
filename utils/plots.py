@@ -1,576 +1,580 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Rectangle
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.gridspec import GridSpec
 import matplotlib.patches as mpatches
 
-def plot_results(simulation_result):
-    """Enhanced plotting function that handles both original and hierarchical model outputs"""
-    
-    # Check if this is hierarchical model output
-    is_hierarchical = 'base_regression' in simulation_result.get('all_model_predictions', {})
-    
-    if is_hierarchical:
-        plot_hierarchical_results(simulation_result)
-    else:
-        plot_standard_results(simulation_result)
-
-def plot_hierarchical_results(simulation_result):
-    """Plot results for hierarchical meta-learning model"""
-    
-    # Create comprehensive figure
-    fig = plt.figure(figsize=(20, 16))
-    gs = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.3)
-    
-    # 1. Main prediction plot
-    ax1 = fig.add_subplot(gs[0, :])
-    plot_main_predictions(ax1, simulation_result)
-    
-    # 2. Model hierarchy visualization
-    ax2 = fig.add_subplot(gs[1, 0])
-    plot_model_hierarchy(ax2, simulation_result)
-    
-    # 3. Base model performance
-    ax3 = fig.add_subplot(gs[1, 1:])
-    plot_base_model_performance(ax3, simulation_result)
-    
-    # 4. Error distribution
-    ax4 = fig.add_subplot(gs[2, 0])
-    plot_error_distribution(ax4, simulation_result)
-    
-    # 5. Confidence analysis
-    ax5 = fig.add_subplot(gs[2, 1])
-    plot_confidence_analysis(ax5, simulation_result)
-    
-    # 6. Trading metrics
-    ax6 = fig.add_subplot(gs[2, 2])
-    plot_trading_metrics(ax6, simulation_result)
-    
-    # 7. Model contribution over time
-    ax7 = fig.add_subplot(gs[3, :])
-    plot_model_contributions(ax7, simulation_result)
-    
-    plt.suptitle('Enhanced Hierarchical Meta-Learning Model Results', fontsize=16, y=0.995)
-    plt.tight_layout()
-    plt.show()
-
-def plot_main_predictions(ax, result):
-    """Plot main predictions with confidence bands"""
-    
-    actual = result['actual_values']
-    predictions = result['predictions']
-    confidence = result['confidence_scores']
-    
-    # Create confidence bands
-    upper_band = predictions + (1 - confidence) * np.std(actual - predictions) * 2
-    lower_band = predictions - (1 - confidence) * np.std(actual - predictions) * 2
-    
-    # Plot
-    ax.plot(actual, label='Actual', color='black', linewidth=2, alpha=0.8)
-    ax.plot(predictions, label='Final Prediction', color='red', linewidth=2)
-    
-    # Confidence bands
-    ax.fill_between(range(len(predictions)), lower_band, upper_band, 
-                    alpha=0.2, color='red', label='Confidence Band')
-    
-    # Level 1 predictions if available
-    if 'level1_regression' in result['all_model_predictions']:
-        level1_pred = result['all_model_predictions']['level1_regression']
-        ax.plot(level1_pred, label='Level 1 Meta', color='blue', 
-                alpha=0.7, linestyle='--', linewidth=1.5)
-    
-    # Highlight high confidence predictions
-    high_conf_mask = confidence > 0.8
-    if np.any(high_conf_mask):
-        ax.scatter(np.where(high_conf_mask)[0], predictions[high_conf_mask], 
-                  color='green', s=50, alpha=0.6, label='High Confidence', zorder=5)
-    
-    ax.set_title('Hierarchical Model Predictions with Confidence Bands', fontsize=14)
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Price')
-    ax.legend(loc='best')
-    ax.grid(True, alpha=0.3)
-
-def plot_model_hierarchy(ax, result):
-    """Visualize the model hierarchy"""
-    
-    # Create hierarchy diagram
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 10)
-    
-    # Base models
-    base_models = list(result['all_model_predictions']['base_regression'].keys())
-    n_base = len(base_models)
-    
-    # Draw base model boxes
-    base_y = 1
-    base_spacing = 8 / n_base
-    base_positions = []
-    
-    for i, model in enumerate(base_models):
-        x = 1 + i * base_spacing
-        rect = Rectangle((x-0.4, base_y-0.3), 0.8, 0.6, 
-                        facecolor='lightblue', edgecolor='black')
-        ax.add_patch(rect)
-        ax.text(x, base_y, model[:6], ha='center', va='center', fontsize=8)
-        base_positions.append((x, base_y))
-    
-    # Level 1 meta-learners
-    level1_y = 4
-    reg_rect = Rectangle((2.5, level1_y-0.3), 2, 0.6, 
-                        facecolor='lightgreen', edgecolor='black')
-    clf_rect = Rectangle((5.5, level1_y-0.3), 2, 0.6, 
-                        facecolor='lightcoral', edgecolor='black')
-    ax.add_patch(reg_rect)
-    ax.add_patch(clf_rect)
-    ax.text(3.5, level1_y, 'L1 Regression', ha='center', va='center', fontsize=10)
-    ax.text(6.5, level1_y, 'L1 Classification', ha='center', va='center', fontsize=10)
-    
-    # Level 2 final
-    level2_y = 7
-    final_rect = Rectangle((4, level2_y-0.3), 2, 0.6, 
-                          facecolor='gold', edgecolor='black')
-    ax.add_patch(final_rect)
-    ax.text(5, level2_y, 'L2 Final', ha='center', va='center', fontsize=12, weight='bold')
-    
-    # Draw connections
-    # Base to Level 1
-    for x, y in base_positions:
-        ax.plot([x, 3.5], [y+0.3, level1_y-0.3], 'k-', alpha=0.3, linewidth=1)
-        ax.plot([x, 6.5], [y+0.3, level1_y-0.3], 'k-', alpha=0.3, linewidth=1)
-    
-    # Level 1 to Level 2
-    ax.plot([3.5, 5], [level1_y+0.3, level2_y-0.3], 'k-', alpha=0.5, linewidth=2)
-    ax.plot([6.5, 5], [level1_y+0.3, level2_y-0.3], 'k-', alpha=0.5, linewidth=2)
-    
-    ax.set_title('Model Hierarchy', fontsize=12)
-    ax.axis('off')
-
-def plot_base_model_performance(ax, result):
-    """Plot base model performance comparison"""
-    
-    actual = result['actual_values']
-    base_preds = result['all_model_predictions']['base_regression']
-    
-    # Calculate metrics for each model
-    model_metrics = {}
-    for model_name, preds in base_preds.items():
-        preds_array = np.array(preds)
-        mae = np.mean(np.abs(preds_array - actual))
-        rmse = np.sqrt(np.mean((preds_array - actual) ** 2))
-        corr = np.corrcoef(preds_array, actual)[0, 1]
-        model_metrics[model_name] = {'MAE': mae, 'RMSE': rmse, 'Correlation': corr}
-    
-    # Create DataFrame for plotting
-    metrics_df = pd.DataFrame(model_metrics).T
-    
-    # Normalize metrics for radar chart
-    metrics_norm = metrics_df.copy()
-    metrics_norm['MAE'] = 1 - (metrics_norm['MAE'] - metrics_norm['MAE'].min()) / (metrics_norm['MAE'].max() - metrics_norm['MAE'].min())
-    metrics_norm['RMSE'] = 1 - (metrics_norm['RMSE'] - metrics_norm['RMSE'].min()) / (metrics_norm['RMSE'].max() - metrics_norm['RMSE'].min())
-    
-    # Plot
-    x = np.arange(len(metrics_df))
-    width = 0.25
-    
-    ax.bar(x - width, metrics_norm['MAE'], width, label='MAE (inverted)', color='skyblue')
-    ax.bar(x, metrics_norm['RMSE'], width, label='RMSE (inverted)', color='lightcoral')
-    ax.bar(x + width, metrics_norm['Correlation'], width, label='Correlation', color='lightgreen')
-    
-    ax.set_xlabel('Models')
-    ax.set_ylabel('Normalized Score')
-    ax.set_title('Base Model Performance Comparison')
-    ax.set_xticks(x)
-    ax.set_xticklabels(metrics_df.index, rotation=45, ha='right')
-    ax.legend()
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    # Add actual values as text
-    for i, model in enumerate(metrics_df.index):
-        mae_val = metrics_df.loc[model, 'MAE']
-        ax.text(i-width, 0.05, f'${mae_val:.1f}', ha='center', va='bottom', fontsize=8)
-
-def plot_error_distribution(ax, result):
-    """Plot error distribution analysis"""
-    
-    errors = np.array(result['errors'])
-    
-    # Create bins for histogram
-    bins = np.linspace(0, np.percentile(errors, 95), 30)
-    
-    # Plot histogram
-    n, bins, patches = ax.hist(errors, bins=bins, alpha=0.7, color='steelblue', edgecolor='black')
-    
-    # Add statistics
-    mean_error = np.mean(errors)
-    median_error = np.median(errors)
-    std_error = np.std(errors)
-    
-    # Add vertical lines for statistics
-    ax.axvline(mean_error, color='red', linestyle='--', linewidth=2, label=f'Mean: ${mean_error:.2f}')
-    ax.axvline(median_error, color='green', linestyle='--', linewidth=2, label=f'Median: ${median_error:.2f}')
-    
-    # Add text box with statistics
-    textstr = f'Std Dev: ${std_error:.2f}\n95th %ile: ${np.percentile(errors, 95):.2f}'
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-    ax.text(0.7, 0.95, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', bbox=props)
-    
-    ax.set_xlabel('Absolute Error ($)')
-    ax.set_ylabel('Frequency')
-    ax.set_title('Error Distribution')
-    ax.legend()
-    ax.grid(True, alpha=0.3, axis='y')
-
-def plot_confidence_analysis(ax, result):
-    """Analyze relationship between confidence and accuracy"""
-    
-    confidence = np.array(result['confidence_scores'])
-    errors = np.array(result['errors'])
-    
-    # Bin confidence scores
-    n_bins = 10
-    confidence_bins = np.linspace(0, 1, n_bins + 1)
-    bin_centers = (confidence_bins[:-1] + confidence_bins[1:]) / 2
-    
-    # Calculate mean error for each confidence bin
-    mean_errors = []
-    error_stds = []
-    counts = []
-    
-    for i in range(n_bins):
-        mask = (confidence >= confidence_bins[i]) & (confidence < confidence_bins[i+1])
-        if np.sum(mask) > 0:
-            mean_errors.append(np.mean(errors[mask]))
-            error_stds.append(np.std(errors[mask]))
-            counts.append(np.sum(mask))
-        else:
-            mean_errors.append(np.nan)
-            error_stds.append(np.nan)
-            counts.append(0)
-    
-    # Plot
-    valid_mask = ~np.isnan(mean_errors)
-    ax.errorbar(bin_centers[valid_mask], np.array(mean_errors)[valid_mask], 
-                yerr=np.array(error_stds)[valid_mask], 
-                marker='o', capsize=5, capthick=2, linewidth=2, markersize=8)
-    
-    # Add sample counts
-    for i, (x, y, n) in enumerate(zip(bin_centers[valid_mask], 
-                                     np.array(mean_errors)[valid_mask], 
-                                     np.array(counts)[valid_mask])):
-        ax.text(x, y + np.array(error_stds)[valid_mask][i] + 5, f'n={n}', 
-                ha='center', fontsize=8)
-    
-    ax.set_xlabel('Confidence Score')
-    ax.set_ylabel('Mean Absolute Error ($)')
-    ax.set_title('Confidence vs Accuracy')
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(-0.05, 1.05)
-
-def plot_trading_metrics(ax, result):
-    """Plot trading performance metrics"""
-    
-    # Calculate cumulative returns
-    actual = result['actual_values']
-    predictions = result['predictions']
-    confidence = result['confidence_scores']
-    
-    returns = []
-    cumulative_pnl = [0]
-    
-    for i in range(1, len(actual)):
-        actual_return = actual[i] - actual[i-1]
-        pred_direction = 1 if predictions[i-1] > actual[i-1] else -1
-        position_size = confidence[i-1]
-        
-        pnl = pred_direction * actual_return * position_size
-        returns.append(pnl)
-        cumulative_pnl.append(cumulative_pnl[-1] + pnl)
-    
-    # Plot cumulative P&L
-    ax.plot(cumulative_pnl, linewidth=2, color='darkgreen')
-    ax.fill_between(range(len(cumulative_pnl)), 0, cumulative_pnl, 
-                    where=np.array(cumulative_pnl) > 0, alpha=0.3, color='green', label='Profit')
-    ax.fill_between(range(len(cumulative_pnl)), 0, cumulative_pnl, 
-                    where=np.array(cumulative_pnl) <= 0, alpha=0.3, color='red', label='Loss')
-    
-    # Add metrics
-    total_pnl = cumulative_pnl[-1]
-    sharpe = np.mean(returns) / (np.std(returns) + 1e-6) * np.sqrt(252*24) if returns else 0
-    max_dd = np.min(np.minimum.accumulate(cumulative_pnl) - cumulative_pnl)
-    
-    textstr = f'Total P&L: ${total_pnl:.2f}\nSharpe: {sharpe:.2f}\nMax DD: ${max_dd:.2f}'
-    props = dict(boxstyle='round', facecolor='lightblue', alpha=0.7)
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', bbox=props)
-    
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Cumulative P&L ($)')
-    ax.set_title('Trading Performance')
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-def plot_model_contributions(ax, result):
-    """Plot how different models contribute over time"""
-    
-    # This is a placeholder - in practice, you'd need to track model weights
-    # For now, we'll show the performance of different models over time
-    
-    actual = result['actual_values']
-    base_preds = result['all_model_predictions']['base_regression']
-    
-    # Calculate rolling MAE for each model
-    window = 24  # 1 day
-    time_steps = range(window, len(actual))
-    
-    rolling_mae = {}
-    for model_name, preds in base_preds.items():
-        preds_array = np.array(preds)
-        mae_series = []
-        for i in time_steps:
-            window_mae = np.mean(np.abs(preds_array[i-window:i] - actual[i-window:i]))
-            mae_series.append(window_mae)
-        rolling_mae[model_name] = mae_series
-    
-    # Plot top 5 models
-    avg_mae = {k: np.mean(v) for k, v in rolling_mae.items()}
-    top_models = sorted(avg_mae.items(), key=lambda x: x[1])[:5]
-    
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(top_models)))
-    
-    for (model_name, _), color in zip(top_models, colors):
-        ax.plot(time_steps, rolling_mae[model_name], label=model_name, 
-                color=color, linewidth=1.5, alpha=0.8)
-    
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Rolling MAE (24h window)')
-    ax.set_title('Model Performance Over Time')
-    ax.legend(loc='best')
-    ax.grid(True, alpha=0.3)
-
-def plot_standard_results(simulation_result):
-    """Original plotting function for non-hierarchical models"""
-    
-    fig, axes = plt.subplots(3, 2, figsize=(15, 12))
-    
-    # 1. Predictions vs Actual
-    ax = axes[0, 0]
-    ax.plot(simulation_result['actual_values'], label='Actual', color='black', linewidth=2)
-    ax.plot(simulation_result['predictions'], label='Ensemble', color='red', linewidth=2)
-    
-    if 'lightgbm' in simulation_result['all_model_predictions']:
-        ax.plot(simulation_result['all_model_predictions']['lightgbm'], 
-                label='LightGBM', alpha=0.5, linestyle='--')
-    if 'haelt' in simulation_result['all_model_predictions']:
-        ax.plot(simulation_result['all_model_predictions']['haelt'], 
-                label='HAELT', alpha=0.5, linestyle='--')
-    
-    ax.set_title('Price Predictions vs Actual')
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Price')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 2. Prediction Errors
-    ax = axes[0, 1]
-    ax.plot(simulation_result['errors'], color='red', alpha=0.7)
-    ax.axhline(y=np.mean(simulation_result['errors']), color='black', 
-               linestyle='--', label=f'Mean: ${np.mean(simulation_result["errors"]):.2f}')
-    ax.fill_between(range(len(simulation_result['errors'])), 
-                    0, simulation_result['errors'], alpha=0.3, color='red')
-    ax.set_title('Absolute Prediction Errors')
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Absolute Error ($)')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 3. Model Weights Evolution
-    ax = axes[1, 0]
-    if simulation_result['weight_evolution']:
-        weights_df = pd.DataFrame(simulation_result['weight_evolution'])
-        for col in weights_df.columns:
-            ax.plot(weights_df[col], label=col, linewidth=2)
-        ax.set_title('Model Weights Evolution')
-        ax.set_xlabel('Time Steps')
-        ax.set_ylabel('Weight')
-        ax.legend()
-        ax.set_ylim([0, 1])
-    else:
-        ax.text(0.5, 0.5, 'No weight evolution data', ha='center', va='center')
-        ax.set_title('Model Weights Evolution')
-    ax.grid(True, alpha=0.3)
-    
-    # 4. Cumulative Performance
-    ax = axes[1, 1]
-    cumulative_actual = np.cumsum(np.diff(simulation_result['actual_values'], prepend=simulation_result['actual_values'][0]))
-    cumulative_pred = np.cumsum(np.diff(simulation_result['predictions'], prepend=simulation_result['predictions'][0]))
-    
-    ax.plot(cumulative_actual, label='Actual Returns', color='black', linewidth=2)
-    ax.plot(cumulative_pred, label='Strategy Returns', color='green', linewidth=2)
-    ax.fill_between(range(len(cumulative_pred)), cumulative_actual, cumulative_pred,
-                    where=cumulative_pred >= cumulative_actual, alpha=0.3, color='green', label='Outperformance')
-    ax.fill_between(range(len(cumulative_pred)), cumulative_actual, cumulative_pred,
-                    where=cumulative_pred < cumulative_actual, alpha=0.3, color='red', label='Underperformance')
-    ax.set_title('Cumulative Returns')
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Cumulative Return ($)')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 5. Error Distribution
-    ax = axes[2, 0]
-    ax.hist(simulation_result['errors'], bins=30, alpha=0.7, color='blue', edgecolor='black')
-    ax.axvline(x=np.mean(simulation_result['errors']), color='red', linestyle='--', 
-               label=f'Mean: ${np.mean(simulation_result["errors"]):.2f}')
-    ax.axvline(x=np.median(simulation_result['errors']), color='green', linestyle='--', 
-               label=f'Median: ${np.median(simulation_result["errors"]):.2f}')
-    ax.set_title('Error Distribution')
-    ax.set_xlabel('Absolute Error ($)')
-    ax.set_ylabel('Frequency')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 6. Performance Metrics Summary
-    ax = axes[2, 1]
-    metrics_text = f"""
-    Performance Metrics:
-    
-    MAE: ${simulation_result['mae']:.2f}
-    RMSE: ${simulation_result['rmse']:.2f}
-    MAPE: {simulation_result['mape']:.2f}%
-    
-    Direction Accuracy: {simulation_result.get('direction_accuracy', 0)*100:.1f}%
-    Average Confidence: {simulation_result.get('avg_confidence', 0):.3f}
-    
-    Total P&L: ${simulation_result.get('total_profit', 0):.2f}
-    Profit Factor: {simulation_result.get('profit_factor', 0):.2f}
+def plot_detailed_trading_signals(simulation_result, window_size=200):
     """
+    Create a detailed, large-format chart focused on trading signals
+    with zoom capability and better visibility
+    """
+    # Set style
+    plt.style.use('seaborn-v0_8-whitegrid')
     
-    ax.text(0.1, 0.5, metrics_text, transform=ax.transAxes, fontsize=12,
-            verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    ax.axis('off')
+    # Create figure with multiple subplots for detailed view
+    fig = plt.figure(figsize=(24, 16))
     
-    plt.suptitle('Real-Time Forecasting Simulation Results', fontsize=16)
+    # Define color scheme
+    colors = {
+        'buy': '#2ECC71',
+        'sell': '#E74C3C',
+        'price': '#2C3E50',
+        'prediction': '#3498DB',
+        'profit_zone': '#27AE60',
+        'loss_zone': '#E74C3C'
+    }
+    
+    # Main plot - Full view
+    ax1 = plt.subplot(3, 1, 1)
+    
+    # Data
+    actual_prices = simulation_result['actual_values']
+    predicted_prices = simulation_result['predictions']
+    
+    # Create time indices for the simulation period
+    time_indices = range(len(actual_prices))
+    
+    # Plot prices
+    ax1.plot(time_indices, actual_prices, 
+             label='Actual Price', color=colors['price'], linewidth=2.5, alpha=0.9)
+    ax1.plot(time_indices, predicted_prices, 
+             label='Predicted Price', color=colors['prediction'], 
+             linewidth=2, alpha=0.7, linestyle='--')
+    
+    # Calculate the sequence_length from the difference in total data vs predictions
+    # This is needed to properly align the trade signal indices
+    sequence_length = 168  # Default, but we can infer it
+    if 'trade_signals' in simulation_result and simulation_result['trade_signals']:
+        # Find the offset by looking at the first trade signal
+        first_signal_idx = simulation_result['trade_signals'][0]['idx']
+        # The sequence_length is approximately the first signal index if trading starts early
+        # But we need a more reliable method - let's use a fixed offset based on typical setup
+        sequence_length = 168  # This matches the model's sequence_length
+    
+    # Plot trading signals with corrected indices
+    if 'trade_signals' in simulation_result:
+        buy_signals = [s for s in simulation_result['trade_signals'] if s['type'] == 'buy']
+        sell_signals = [s for s in simulation_result['trade_signals'] if s['type'] == 'sell']
+        
+        # Buy signals - adjust indices to match the actual_values array
+        if buy_signals:
+            # The signal idx is in the full dataset, but our arrays start at sequence_length
+            buy_indices = [s['idx'] - sequence_length for s in buy_signals]
+            buy_prices = [s['price'] for s in buy_signals]
+            
+            # Filter out any negative indices (shouldn't happen but just in case)
+            valid_buys = [(idx, price, i) for i, (idx, price) in enumerate(zip(buy_indices, buy_prices)) if 0 <= idx < len(actual_prices)]
+            
+            if valid_buys:
+                buy_indices_plot = [x[0] for x in valid_buys]
+                buy_prices_plot = [x[1] for x in valid_buys]
+                buy_original_indices = [x[2] for x in valid_buys]
+                
+                ax1.scatter(buy_indices_plot, buy_prices_plot, 
+                           color=colors['buy'], marker='^', s=200, 
+                           edgecolor='black', linewidth=2, zorder=5, label='Buy Signal')
+                
+                # Add annotations for buy signals
+                for plot_idx, price, orig_idx in zip(buy_indices_plot, buy_prices_plot, buy_original_indices):
+                    if 'reason' in buy_signals[orig_idx]:
+                        reason = buy_signals[orig_idx]['reason'].split('|')[0]  # Get first part of reason
+                        ax1.annotate(f'B{orig_idx+1}: {reason}', 
+                                   xy=(plot_idx, price), 
+                                   xytext=(plot_idx, price * 1.02),
+                                   fontsize=10, ha='center',
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor=colors['buy'], alpha=0.7))
+
+        # Sell signals - adjust indices similarly
+        if sell_signals:
+            sell_indices = [s['idx'] - sequence_length for s in sell_signals]
+            sell_prices = [s['price'] for s in sell_signals]
+            
+            # Filter out any invalid indices
+            valid_sells = [(idx, price, i) for i, (idx, price) in enumerate(zip(sell_indices, sell_prices)) if 0 <= idx < len(actual_prices)]
+            
+            if valid_sells:
+                sell_indices_plot = [x[0] for x in valid_sells]
+                sell_prices_plot = [x[1] for x in valid_sells]
+                sell_original_indices = [x[2] for x in valid_sells]
+                
+                ax1.scatter(sell_indices_plot, sell_prices_plot, 
+                           color=colors['sell'], marker='v', s=200,
+                           edgecolor='black', linewidth=2, zorder=5, label='Sell Signal')
+                
+                # Add annotations for sell signals
+                for plot_idx, price, orig_idx in zip(sell_indices_plot, sell_prices_plot, sell_original_indices):
+                    if 'reason' in sell_signals[orig_idx]:
+                        reason = sell_signals[orig_idx]['reason'].split(':')[0]  # Get exit type
+                        ax1.annotate(f'S{orig_idx+1}: {reason}', 
+                                   xy=(plot_idx, price), 
+                                   xytext=(plot_idx, price * 0.98),
+                                   fontsize=10, ha='center',
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor=colors['sell'], alpha=0.7))
+    
+    # Highlight profitable trades
+    if 'trades' in simulation_result:
+        for trade in simulation_result['trades']:
+            if trade['profit'] > 0:
+                # Shade profitable trade periods
+                entry_idx = trade.get('entry_time', 0) - sequence_length
+                exit_idx = trade.get('exit_time', 0) - sequence_length
+                
+                if 0 <= entry_idx < len(actual_prices) and 0 <= exit_idx < len(actual_prices):
+                    ax1.axvspan(entry_idx, exit_idx, alpha=0.1, color=colors['profit_zone'])
+    
+    ax1.set_title('Trading Signals Overview - Full Period', fontsize=20, weight='bold', pad=20)
+    ax1.set_ylabel('Price ($)', fontsize=16)
+    ax1.legend(loc='upper left', fontsize=14)
+    ax1.grid(True, alpha=0.3)
+    
+    # Zoomed view 1 - First half of trades
+    ax2 = plt.subplot(3, 1, 2)
+    
+    # Find range with most activity
+    if 'trade_signals' in simulation_result and simulation_result['trade_signals']:
+        signal_indices = [s['idx'] - sequence_length for s in simulation_result['trade_signals']]
+        valid_signal_indices = [idx for idx in signal_indices if 0 <= idx < len(actual_prices)]
+        
+        # First half zoom
+        if valid_signal_indices:
+            mid_point = len(time_indices) // 2
+            zoom_start = max(0, min(valid_signal_indices[0] - 50, mid_point - window_size//2))
+            zoom_end = min(len(time_indices), zoom_start + window_size)
+            
+            # Plot zoomed section
+            zoom_indices = range(zoom_start, zoom_end)
+            ax2.plot(zoom_indices, actual_prices[zoom_start:zoom_end], 
+                    color=colors['price'], linewidth=3, label='Actual Price')
+            ax2.plot(zoom_indices, predicted_prices[zoom_start:zoom_end], 
+                    color=colors['prediction'], linewidth=2.5, alpha=0.8, 
+                    linestyle='--', label='Predicted Price')
+            
+            # Plot signals in zoom range
+            for signal in simulation_result['trade_signals']:
+                sig_idx = signal['idx'] - sequence_length
+                if zoom_start <= sig_idx < zoom_end:
+                    if signal['type'] == 'buy':
+                        ax2.scatter(sig_idx, signal['price'], 
+                                   color=colors['buy'], marker='^', s=300, 
+                                   edgecolor='black', linewidth=2, zorder=5)
+                        ax2.text(sig_idx, signal['price'] * 1.01, 'BUY', 
+                                ha='center', fontsize=12, weight='bold')
+                    else:
+                        ax2.scatter(sig_idx, signal['price'], 
+                                   color=colors['sell'], marker='v', s=300,
+                                   edgecolor='black', linewidth=2, zorder=5)
+                        ax2.text(sig_idx, signal['price'] * 0.99, 'SELL', 
+                                ha='center', fontsize=12, weight='bold')
+            
+            ax2.set_title(f'Detailed View - Time Steps {zoom_start} to {zoom_end}', 
+                         fontsize=18, weight='bold')
+            ax2.set_ylabel('Price ($)', fontsize=16)
+            ax2.legend(fontsize=12)
+            ax2.grid(True, alpha=0.3)
+    
+    # Zoomed view 2 - Most recent trades
+    ax3 = plt.subplot(3, 1, 3)
+    
+    # Recent activity zoom
+    recent_start = max(0, len(time_indices) - window_size)
+    recent_end = len(time_indices)
+    recent_indices = range(recent_start, recent_end)
+    
+    ax3.plot(recent_indices, actual_prices[recent_start:recent_end], 
+            color=colors['price'], linewidth=3, label='Actual Price')
+    ax3.plot(recent_indices, predicted_prices[recent_start:recent_end], 
+            color=colors['prediction'], linewidth=2.5, alpha=0.8, 
+            linestyle='--', label='Predicted Price')
+    
+    # Plot signals in recent range
+    for signal in simulation_result['trade_signals']:
+        sig_idx = signal['idx'] - sequence_length
+        if recent_start <= sig_idx < recent_end:
+            if signal['type'] == 'buy':
+                ax3.scatter(sig_idx, signal['price'], 
+                           color=colors['buy'], marker='^', s=300, 
+                           edgecolor='black', linewidth=2, zorder=5)
+                ax3.text(sig_idx, signal['price'] * 1.01, 'BUY', 
+                        ha='center', fontsize=12, weight='bold')
+            else:
+                ax3.scatter(sig_idx, signal['price'], 
+                           color=colors['sell'], marker='v', s=300,
+                           edgecolor='black', linewidth=2, zorder=5)
+                ax3.text(sig_idx, signal['price'] * 0.99, 'SELL', 
+                        ha='center', fontsize=12, weight='bold')
+    
+    ax3.set_title(f'Recent Activity - Last {window_size} Time Steps', 
+                 fontsize=18, weight='bold')
+    ax3.set_xlabel('Time Step', fontsize=16)
+    ax3.set_ylabel('Price ($)', fontsize=16)
+    ax3.legend(fontsize=12)
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Create a second figure for trade analysis
+    fig2 = plt.figure(figsize=(20, 10))
+    
+    # Trade entry/exit analysis
+    if 'trades' in simulation_result and simulation_result['trades']:
+        ax4 = plt.subplot(1, 2, 1)
+        
+        # Extract trade data
+        entry_prices = [t['entry_price'] for t in simulation_result['trades']]
+        exit_prices = [t['exit_price'] for t in simulation_result['trades']]
+        profits = [t['profit'] for t in simulation_result['trades']]
+        
+        # Create trade visualization
+        trade_nums = range(len(simulation_result['trades']))
+        bar_colors = [colors['profit_zone'] if p > 0 else colors['loss_zone'] for p in profits]
+        
+        # Plot entry and exit prices
+        ax4.scatter(trade_nums, entry_prices, color=colors['buy'], 
+                   marker='^', s=150, label='Entry Price', zorder=3)
+        ax4.scatter(trade_nums, exit_prices, color=colors['sell'], 
+                   marker='v', s=150, label='Exit Price', zorder=3)
+        
+        # Connect entry and exit with lines
+        for i, (entry, exit, profit) in enumerate(zip(entry_prices, exit_prices, profits)):
+            color = colors['profit_zone'] if profit > 0 else colors['loss_zone']
+            ax4.plot([i, i], [entry, exit], color=color, linewidth=2, alpha=0.6)
+        
+        ax4.set_title('Trade Entry and Exit Prices', fontsize=18, weight='bold')
+        ax4.set_xlabel('Trade Number', fontsize=14)
+        ax4.set_ylabel('Price ($)', fontsize=14)
+        ax4.legend(fontsize=12)
+        ax4.grid(True, alpha=0.3)
+        
+        # Trade profit distribution
+        ax5 = plt.subplot(1, 2, 2)
+        
+        ax5.bar(trade_nums, profits, color=bar_colors, alpha=0.8, edgecolor='black')
+        ax5.axhline(y=0, color='black', linestyle='-', linewidth=1)
+        
+        # Add average lines
+        avg_profit = simulation_result.get('avg_profit', 0)
+        avg_loss = simulation_result.get('avg_loss', 0)
+        
+        if avg_profit > 0:
+            ax5.axhline(y=avg_profit, color=colors['profit_zone'], 
+                       linestyle='--', linewidth=2, label=f'Avg Win: ${avg_profit:.2f}')
+        if avg_loss < 0:
+            ax5.axhline(y=avg_loss, color=colors['loss_zone'], 
+                       linestyle='--', linewidth=2, label=f'Avg Loss: ${avg_loss:.2f}')
+        
+        ax5.set_title('Individual Trade Profit/Loss', fontsize=18, weight='bold')
+        ax5.set_xlabel('Trade Number', fontsize=14)
+        ax5.set_ylabel('Profit/Loss ($)', fontsize=14)
+        ax5.legend(fontsize=12)
+        ax5.grid(True, alpha=0.3, axis='y')
+    
     plt.tight_layout()
     plt.show()
 
-def plot_classification_results(simulation_result):
-    """Enhanced classification results plotting"""
+
+def analyze_uncertainty_issue(simulation_result, model=None):
+    """
+    Analyze and diagnose the uncertainty calculation issue
+    """
+    print("\n" + "="*60)
+    print("UNCERTAINTY ANALYSIS")
+    print("="*60)
     
-    if 'direction_predictions' not in simulation_result:
-        print("No classification data available")
+    # Get uncertainty scores
+    uncertainty_scores = np.array(simulation_result.get('uncertainty_scores', []))
+    
+    if len(uncertainty_scores) == 0:
+        print("No uncertainty scores found in simulation results.")
         return
     
+    # Basic statistics
+    print(f"\nUncertainty Statistics:")
+    print(f"  Min: {np.min(uncertainty_scores):.6f}")
+    print(f"  Max: {np.max(uncertainty_scores):.6f}")
+    print(f"  Mean: {np.mean(uncertainty_scores):.6f}")
+    print(f"  Std: {np.std(uncertainty_scores):.6f}")
+    print(f"  Unique values: {len(np.unique(uncertainty_scores))}")
+    
+    # Check if all values are 1.0
+    if np.all(uncertainty_scores == 1.0):
+        print("\n⚠️  WARNING: All uncertainty values are 1.0!")
+        print("This indicates an issue with the uncertainty calculation.")
+    
+    # Sample some values
+    print(f"\nFirst 10 uncertainty values: {uncertainty_scores[:10]}")
+    print(f"Last 10 uncertainty values: {uncertainty_scores[-10:]}")
+    
+    # Plot uncertainty distribution
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     
-    # 1. Direction Predictions Over Time
-    ax = axes[0, 0]
+    # Time series plot
+    ax1 = axes[0, 0]
+    ax1.plot(uncertainty_scores, linewidth=1)
+    ax1.set_title('Uncertainty Over Time', fontsize=14)
+    ax1.set_xlabel('Time Step')
+    ax1.set_ylabel('Uncertainty Score')
+    ax1.grid(True, alpha=0.3)
     
-    # Calculate actual directions
-    actual_directions = []
-    for i in range(1, len(simulation_result['actual_values'])):
-        actual_directions.append(1 if simulation_result['actual_values'][i] > simulation_result['actual_values'][i-1] else 0)
+    # Histogram
+    ax2 = axes[0, 1]
+    ax2.hist(uncertainty_scores, bins=50, alpha=0.7, color='blue', edgecolor='black')
+    ax2.set_title('Uncertainty Distribution', fontsize=14)
+    ax2.set_xlabel('Uncertainty Score')
+    ax2.set_ylabel('Frequency')
+    ax2.grid(True, alpha=0.3, axis='y')
     
-    # Align arrays
-    min_len = min(len(actual_directions), len(simulation_result['direction_predictions'][1:]))
-    actual_dir_aligned = actual_directions[:min_len]
-    pred_dir_aligned = simulation_result['direction_predictions'][1:min_len+1]
-    
-    ax.plot(actual_dir_aligned, label='Actual Direction', alpha=0.7, linewidth=1)
-    ax.plot(pred_dir_aligned, label='Predicted Direction', alpha=0.7, linewidth=1)
-    
-    # Add accuracy overlay
-    correct_predictions = np.array(actual_dir_aligned) == np.array(pred_dir_aligned)
-    ax.fill_between(range(len(correct_predictions)), 0, 1, 
-                    where=correct_predictions, alpha=0.2, color='green', label='Correct')
-    
-    ax.set_title('Direction Predictions')
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Direction (0=Down, 1=Up)')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 2. Rolling Accuracy
-    ax = axes[0, 1]
-    
-    if 'direction_accuracies' in simulation_result and len(simulation_result['direction_accuracies']) > 0:
-        window = min(24, len(simulation_result['direction_accuracies']))  # 24 hours
-        rolling_acc = pd.Series(simulation_result['direction_accuracies']).rolling(window).mean()
+    # Uncertainty vs Prediction Error
+    if 'predictions' in simulation_result and 'actual_values' in simulation_result:
+        predictions = np.array(simulation_result['predictions'])
+        actuals = np.array(simulation_result['actual_values'])
         
-        ax.plot(rolling_acc, linewidth=2, color='blue')
-        ax.axhline(y=0.5, color='red', linestyle='--', label='Random Baseline')
-        ax.fill_between(range(len(rolling_acc)), 0.5, rolling_acc, 
-                       where=rolling_acc >= 0.5, alpha=0.3, color='green')
-        ax.fill_between(range(len(rolling_acc)), 0.5, rolling_acc, 
-                       where=rolling_acc < 0.5, alpha=0.3, color='red')
+        # Calculate prediction errors
+        errors = np.abs(predictions - actuals)
+        relative_errors = errors / (actuals + 1e-6)
         
-        ax.set_title(f'Rolling Direction Accuracy ({window}h window)')
-        ax.set_xlabel('Time Steps')
-        ax.set_ylabel('Accuracy')
-        ax.set_ylim([0, 1])
-        ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 3. Confidence Distribution
-    ax = axes[1, 0]
-    
-    confidence = simulation_result['confidence_scores']
-    ax.hist(confidence, bins=30, alpha=0.7, color='purple', edgecolor='black')
-    ax.axvline(x=np.mean(confidence), color='red', linestyle='--', 
-               label=f'Mean: {np.mean(confidence):.3f}')
-    ax.axvline(x=0.5, color='black', linestyle=':', label='Neutral (0.5)')
-    
-    ax.set_title('Confidence Score Distribution')
-    ax.set_xlabel('Confidence Score')
-    ax.set_ylabel('Frequency')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # 4. Confidence vs Accuracy
-    ax = axes[1, 1]
-    
-    if len(simulation_result['direction_accuracies']) > 0:
-        # Bin confidence and calculate accuracy for each bin
-        n_bins = 10
-        conf_bins = np.linspace(0, 1, n_bins + 1)
-        bin_centers = (conf_bins[:-1] + conf_bins[1:]) / 2
+        ax3 = axes[1, 0]
+        scatter = ax3.scatter(uncertainty_scores, relative_errors, 
+                            alpha=0.5, c=range(len(uncertainty_scores)), 
+                            cmap='viridis', s=20)
+        ax3.set_title('Uncertainty vs Prediction Error', fontsize=14)
+        ax3.set_xlabel('Uncertainty Score')
+        ax3.set_ylabel('Relative Prediction Error')
+        ax3.grid(True, alpha=0.3)
+        plt.colorbar(scatter, ax=ax3, label='Time Step')
         
-        bin_accuracies = []
-        bin_counts = []
-        
-        for i in range(n_bins):
-            mask = (confidence[1:len(simulation_result['direction_accuracies'])+1] >= conf_bins[i]) & \
-                   (confidence[1:len(simulation_result['direction_accuracies'])+1] < conf_bins[i+1])
-            if np.sum(mask) > 0:
-                bin_acc = np.mean(np.array(simulation_result['direction_accuracies'])[mask])
-                bin_accuracies.append(bin_acc)
-                bin_counts.append(np.sum(mask))
-            else:
-                bin_accuracies.append(np.nan)
-                bin_counts.append(0)
-        
-        # Plot
-        valid_mask = ~np.isnan(bin_accuracies)
-        ax.bar(bin_centers[valid_mask], np.array(bin_accuracies)[valid_mask], 
-               width=0.08, alpha=0.7, color='orange', edgecolor='black')
-        
-        # Add count labels
-        for i, (x, y, n) in enumerate(zip(bin_centers[valid_mask], 
-                                         np.array(bin_accuracies)[valid_mask], 
-                                         np.array(bin_counts)[valid_mask])):
-            ax.text(x, y + 0.02, f'n={n}', ha='center', fontsize=8)
-        
-        ax.axhline(y=0.5, color='red', linestyle='--', label='Random Baseline')
-        ax.set_xlabel('Confidence Bin')
-        ax.set_ylabel('Direction Accuracy')
-        ax.set_title('Accuracy by Confidence Level')
-        ax.set_ylim([0, 1])
-        ax.legend()
+        # Rolling correlation
+        ax4 = axes[1, 1]
+        window = 50
+        if len(uncertainty_scores) > window:
+            rolling_corr = pd.Series(uncertainty_scores).rolling(window).corr(pd.Series(relative_errors))
+            ax4.plot(rolling_corr)
+            ax4.set_title(f'Rolling Correlation (window={window})', fontsize=14)
+            ax4.set_xlabel('Time Step')
+            ax4.set_ylabel('Correlation')
+            ax4.grid(True, alpha=0.3)
+            ax4.axhline(y=0, color='red', linestyle='--', alpha=0.5)
     
-    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
     
-    plt.suptitle('Classification & Direction Prediction Results', fontsize=16)
+    # Provide recommendations
+    print("\n" + "="*60)
+    print("RECOMMENDATIONS:")
+    print("="*60)
+    
+    if np.all(uncertainty_scores == 1.0):
+        print("\n1. The uncertainty normalization is causing all values to be 1.0")
+        print("   This happens when all raw uncertainty values are similar.")
+        print("\n2. Possible fixes:")
+        print("   - Remove or adjust the normalization in the model's predict method")
+        print("   - Use a different uncertainty calculation method")
+        print("   - Check if the model is properly learning uncertainty during training")
+        print("\n3. The model might need:")
+        print("   - Better uncertainty targets during training")
+        print("   - A different loss function for uncertainty")
+        print("   - More diverse training data to learn uncertainty patterns")
+
+
+def create_fixed_uncertainty_calculation():
+    """
+    Provide a fixed uncertainty calculation method
+    """
+    code = '''
+# Fixed uncertainty calculation for model_with_trading.py
+# Replace the uncertainty normalization in the predict method
+
+# Option 1: Use min-max scaling with bounds
+def normalize_uncertainty(uncertainty_raw):
+    """Normalize uncertainty to 0-1 range with proper scaling"""
+    # Add small noise to prevent all values being identical
+    uncertainty = uncertainty_raw + np.random.normal(0, 1e-6, uncertainty_raw.shape)
+    
+    # Use percentile-based normalization for better range
+    low_percentile = np.percentile(uncertainty, 5)
+    high_percentile = np.percentile(uncertainty, 95)
+    
+    if high_percentile > low_percentile:
+        normalized = (uncertainty - low_percentile) / (high_percentile - low_percentile)
+        normalized = np.clip(normalized, 0, 1)
+    else:
+        # If all values are similar, use standard scaling
+        mean = np.mean(uncertainty)
+        std = np.std(uncertainty)
+        if std > 0:
+            normalized = (uncertainty - mean) / (3 * std) + 0.5
+            normalized = np.clip(normalized, 0, 1)
+        else:
+            # Last resort: return moderate uncertainty
+            normalized = np.full_like(uncertainty, 0.5)
+    
+    return normalized
+
+# Option 2: Use ensemble variance as uncertainty
+def calculate_ensemble_uncertainty(base_predictions_reg):
+    """Calculate uncertainty from ensemble variance"""
+    # Get predictions from all models
+    all_preds = np.array(list(base_predictions_reg.values()))
+    
+    # Calculate variance across models
+    ensemble_variance = np.var(all_preds, axis=0)
+    
+    # Normalize to 0-1 range
+    normalized_uncertainty = 1 - np.exp(-ensemble_variance)
+    
+    return normalized_uncertainty
+
+# Option 3: Use prediction confidence and historical accuracy
+def calculate_adaptive_uncertainty(predictions, confidence, lookback=20):
+    """Calculate uncertainty based on recent prediction accuracy"""
+    if len(predictions) < lookback:
+        return np.full_like(predictions, 0.5)
+    
+    # Calculate rolling prediction variance
+    pred_series = pd.Series(predictions)
+    rolling_std = pred_series.rolling(lookback).std()
+    
+    # Combine with confidence
+    uncertainty = (1 - confidence) * 0.7 + (rolling_std / pred_series.mean()) * 0.3
+    
+    return np.clip(uncertainty, 0, 1)
+'''
+    
+    print("\n" + "="*60)
+    print("FIXED UNCERTAINTY CALCULATION")
+    print("="*60)
+    print(code)
+    print("\nYou can replace the uncertainty calculation in model_with_trading.py")
+    print("in the predict method where it currently normalizes uncertainty.")
+
+
+# Additional function to plot model confidence analysis
+def plot_confidence_uncertainty_analysis(simulation_result):
+    """
+    Create detailed plots for confidence and uncertainty analysis
+    """
+    fig = plt.figure(figsize=(20, 12))
+    
+    # Get data
+    confidence_scores = np.array(simulation_result.get('confidence_scores', []))
+    uncertainty_scores = np.array(simulation_result.get('uncertainty_scores', []))
+    predictions = np.array(simulation_result.get('predictions', []))
+    actuals = np.array(simulation_result.get('actual_values', []))
+    
+    # Calculate prediction errors
+    errors = np.abs(predictions - actuals)
+    relative_errors = errors / (actuals + 1e-6)
+    
+    # Plot 1: Confidence and Uncertainty over time
+    ax1 = plt.subplot(3, 1, 1)
+    ax1_twin = ax1.twinx()
+    
+    line1 = ax1.plot(confidence_scores, color='green', linewidth=2, label='Confidence', alpha=0.8)
+    line2 = ax1_twin.plot(uncertainty_scores, color='red', linewidth=2, label='Uncertainty', alpha=0.8)
+    
+    ax1.set_xlabel('Time Step', fontsize=12)
+    ax1.set_ylabel('Confidence Score', fontsize=12, color='green')
+    ax1_twin.set_ylabel('Uncertainty Score', fontsize=12, color='red')
+    ax1.tick_params(axis='y', labelcolor='green')
+    ax1_twin.tick_params(axis='y', labelcolor='red')
+    
+    # Combine legends
+    lines = line1 + line2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='upper left')
+    
+    ax1.set_title('Model Confidence and Uncertainty Over Time', fontsize=16, weight='bold')
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Confidence vs Prediction Accuracy
+    ax2 = plt.subplot(3, 1, 2)
+    
+    # Create bins for confidence levels
+    confidence_bins = np.linspace(0, 1, 11)
+    bin_indices = np.digitize(confidence_scores, confidence_bins)
+    
+    # Calculate accuracy for each confidence bin
+    accuracies = []
+    bin_centers = []
+    bin_counts = []
+    
+    for i in range(1, len(confidence_bins)):
+        mask = bin_indices == i
+        if np.sum(mask) > 0:
+            bin_errors = relative_errors[mask]
+            accuracy = 1 - np.mean(bin_errors)
+            accuracies.append(accuracy)
+            bin_centers.append((confidence_bins[i-1] + confidence_bins[i]) / 2)
+            bin_counts.append(np.sum(mask))
+    
+    # Plot accuracy by confidence
+    scatter = ax2.scatter(bin_centers, accuracies, s=np.array(bin_counts)*10, 
+                         alpha=0.6, c=bin_centers, cmap='viridis')
+    ax2.plot(bin_centers, accuracies, 'r--', alpha=0.5)
+    
+    # Ideal line (confidence = accuracy)
+    ax2.plot([0, 1], [0, 1], 'k--', alpha=0.3, label='Ideal Calibration')
+    
+    ax2.set_xlabel('Confidence Level', fontsize=12)
+    ax2.set_ylabel('Actual Accuracy', fontsize=12)
+    ax2.set_title('Model Calibration: Confidence vs Actual Accuracy', fontsize=16, weight='bold')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    
+    # Add colorbar for scatter
+    cbar = plt.colorbar(scatter, ax=ax2)
+    cbar.set_label('Confidence Level', fontsize=10)
+    
+    # Plot 3: Trade signals colored by confidence/uncertainty
+    ax3 = plt.subplot(3, 1, 3)
+    
+    # Calculate sequence_length for proper alignment
+    sequence_length = 168  # Default value, matching the model
+    
+    if 'trade_signals' in simulation_result:
+        buy_signals = [s for s in simulation_result['trade_signals'] if s['type'] == 'buy']
+        
+        if buy_signals:
+            # Adjust indices to match the confidence/uncertainty arrays
+            buy_indices_adjusted = []
+            buy_confidences = []
+            buy_uncertainties = []
+            
+            for signal in buy_signals:
+                # Adjust the index
+                adjusted_idx = signal['idx'] - sequence_length
+                
+                # Check if the adjusted index is valid
+                if 0 <= adjusted_idx < len(confidence_scores):
+                    buy_indices_adjusted.append(len(buy_indices_adjusted))  # Sequential numbering for x-axis
+                    buy_confidences.append(confidence_scores[adjusted_idx])
+                    buy_uncertainties.append(uncertainty_scores[adjusted_idx])
+            
+            if buy_confidences:
+                # Create color map based on uncertainty
+                scatter = ax3.scatter(range(len(buy_confidences)), buy_confidences, 
+                                    c=buy_uncertainties, cmap='RdYlGn_r', 
+                                    s=200, edgecolor='black', linewidth=1)
+                
+                ax3.set_xlabel('Buy Signal Number', fontsize=12)
+                ax3.set_ylabel('Confidence at Buy', fontsize=12)
+                ax3.set_title('Buy Signal Analysis: Confidence vs Uncertainty', 
+                            fontsize=16, weight='bold')
+                
+                # Add colorbar
+                cbar = plt.colorbar(scatter, ax=ax3)
+                cbar.set_label('Uncertainty', fontsize=10)
+                
+                # Add reference lines
+                ax3.axhline(y=0.6, color='orange', linestyle='--', 
+                          alpha=0.5, label='Min Confidence Threshold')
+                ax3.legend()
+    
+    ax3.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     plt.show()

@@ -1829,9 +1829,11 @@ class EnhancedHierarchicalMetaLearner:
         level4 = self.scalers['target'].inverse_transform(level4.reshape(-1, 1)).ravel()
         
         # Normalize uncertainty from TCN model
+        # Normalize uncertainty from TCN model
+        # Use raw uncertainty from TCN model
         if 'uncertainty' in locals():
-            # Scale uncertainty to 0-1 range
-            uncertainty = uncertainty / (np.max(uncertainty) + 1e-6)
+            # Keep the actual uncertainty values from the model
+            uncertainty = uncertainty
         else:
             uncertainty = level4_uncertainty
         

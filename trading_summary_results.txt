@@ -1,0 +1,39 @@
+
+ENHANCED TRADING SIMULATION RESULTS
+=====================================
+Symbol: SOL/USDT
+Date: 2025-08-01 21:37:38
+
+CONFIGURATION:
+--------------
+Initial Capital:     $500.00
+Sequence Length:     168
+Forecast Horizon:    730
+
+TRADING PARAMETERS:
+--------------------
+Min Confidence Buy:  0.6
+Max Uncertainty Buy: 0.3
+Stop Loss:           2.0%
+Take Profit:         4.0%
+Min Risk-Reward:     2.0
+Trend Filter:        True (MA 200)
+
+MODEL PERFORMANCE:
+------------------
+MAE:                 $1.84
+RMSE:                $2.41
+MAPE:                1.08%
+Avg Confidence:      0.642
+Avg Uncertainty:     1.000
+
+TRADING PERFORMANCE:
+--------------------
+Final Capital:       $500.24
+Total Return:        0.05%
+Total Trades:        1
+Win Rate:            100.0%
+Average Win:         $0.24
+Average Loss:        $0.00
+Sharpe Ratio:        0.37
+Max Drawdown:        -0.02%
